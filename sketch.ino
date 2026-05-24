@@ -1,17 +1,16 @@
 #include <TFT_eSPI.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include "pixel_creature.h"
 
 TFT_eSPI tft = TFT_eSPI();
 
-// WiFi credentials — change these
 const char* SSID     = "Wokwi-GUEST";
 const char* PASSWORD = "";
 
-// MacBook daemon URL — change IP to your Mac's IP
-const char* DAEMON_URL = "http://192.168.1.100:8787/usage";
+const char* DAEMON_URL = "http://192.168.1.200:8787/usage";
 
-// Duck states
 enum DuckState {
   IDLE,
   LISTENING,
@@ -22,156 +21,231 @@ enum DuckState {
 DuckState currentState = IDLE;
 String transcript = "";
 unsigned long lastPoll = 0;
-const int POLL_INTERVAL = 3000; // poll every 3s
+const int POLL_INTERVAL = 3000;
 
-// ── Colours ──────────────────────────────
-#define BG_COLOR      TFT_BLACK
-#define DUCK_YELLOW   0xFFE0
-#define DUCK_ORANGE   0xFD20
-#define TEXT_WHITE    TFT_WHITE
-#define TEXT_GREEN    TFT_GREEN
-#define TEXT_CYAN     TFT_CYAN
+uint8_t animFrame = 0;
+unsigned long lastAnimMs = 0;
+const uint16_t ANIM_MS = 400;
 
-// ── Draw Duck Face ────────────────────────
-void drawDuckFace(DuckState state) {
-  tft.fillScreen(BG_COLOR);
+// Duck palette
+uint16_t COLOR_YELLOW = 0;
+uint16_t COLOR_BILL   = 0;
+const uint16_t COLOR_BG      = 0x0841;
+const uint16_t COLOR_PANEL   = 0x1082;
+const uint16_t COLOR_LINE    = 0x3186;
+const uint16_t COLOR_DIM     = 0x8C71;
+const uint16_t COLOR_GREEN   = 0x4EC9;
+const uint16_t COLOR_CYAN    = 0x5D9F;
 
-  // Head (big yellow circle)
-  tft.fillCircle(160, 100, 70, DUCK_YELLOW);
+const int PIX_SCALE = 10;
+const int PIX_COLS  = 20;
+const int PIX_ROWS  = 20;
+const int SPRITE_W  = PIX_COLS * PIX_SCALE;
+const int SPRITE_H  = PIX_ROWS * PIX_SCALE;
+const int PIX_X     = (320 - SPRITE_W) / 2;
+const int PIX_Y     = 28;
 
-  // Bill (orange oval)
-  tft.fillEllipse(160, 145, 25, 14, DUCK_ORANGE);
+struct AnimSet {
+  const uint8_t* const* frames;
+  uint8_t count;
+};
 
-  // Eyes based on state
-  if (state == IDLE) {
-    // Normal eyes — open circles
-    tft.fillCircle(135, 85, 12, TFT_WHITE);
-    tft.fillCircle(185, 85, 12, TFT_WHITE);
-    tft.fillCircle(137, 87, 6, TFT_BLACK);
-    tft.fillCircle(187, 87, 6, TFT_BLACK);
-
-  } else if (state == LISTENING) {
-    // Wide eyes — bigger
-    tft.fillCircle(135, 85, 14, TFT_WHITE);
-    tft.fillCircle(185, 85, 14, TFT_WHITE);
-    tft.fillCircle(135, 85, 7, TFT_BLACK);
-    tft.fillCircle(185, 85, 7, TFT_BLACK);
-    // Eyebrows raised
-    tft.drawLine(125, 68, 148, 65, TFT_BLACK);
-    tft.drawLine(175, 65, 198, 68, TFT_BLACK);
-
+AnimSet animFor(DuckState state) {
+  AnimSet set = { idle_FRAMES, idle_FRAME_COUNT };
+  if (state == LISTENING) {
+    set.frames = listen_FRAMES;
+    set.count = listen_FRAME_COUNT;
   } else if (state == THINKING) {
-    // One eye squinting
-    tft.fillCircle(135, 85, 12, TFT_WHITE);
-    tft.fillCircle(185, 85, 12, TFT_WHITE);
-    tft.fillCircle(137, 87, 6, TFT_BLACK);
-    tft.fillCircle(187, 87, 6, TFT_BLACK);
-    // Thinking brow
-    tft.drawLine(125, 72, 148, 75, TFT_BLACK);
-    tft.drawLine(175, 75, 198, 72, TFT_BLACK);
-    // Sweat drop
-    tft.fillCircle(210, 70, 5, TFT_CYAN);
-
+    set.frames = think_FRAMES;
+    set.count = think_FRAME_COUNT;
   } else if (state == TALKING) {
-    // Happy eyes — curved lines
-    tft.fillCircle(135, 85, 12, TFT_WHITE);
-    tft.fillCircle(185, 85, 12, TFT_WHITE);
-    tft.fillCircle(137, 87, 6, TFT_BLACK);
-    tft.fillCircle(187, 87, 6, TFT_BLACK);
-    // Open bill (mouth open)
-    tft.fillEllipse(160, 148, 25, 16, DUCK_ORANGE);
-    tft.fillEllipse(160, 150, 18, 8, TFT_DARKGREY);
+    set.frames = talk_FRAMES;
+    set.count = talk_FRAME_COUNT;
   }
+  return set;
+}
 
-  // State label
-  drawStateLabel(state);
+const uint8_t* frameAt(const AnimSet& set, uint8_t index) {
+  return (const uint8_t*)pgm_read_ptr(&set.frames[index % set.count]);
+}
 
-  // Transcript
+void drawPixelGrid(const uint8_t* frame) {
+  for (int row = 0; row < PIX_ROWS; row++) {
+    for (int col = 0; col < PIX_COLS; col++) {
+      const uint8_t cell = pgm_read_byte(&frame[row * PIX_COLS + col]);
+      if (cell == PX_EMPTY) continue;
+
+      const int x = PIX_X + col * PIX_SCALE;
+      const int y = PIX_Y + row * PIX_SCALE;
+
+      uint16_t color = COLOR_YELLOW;
+      if (cell == PX_EYE) color = TFT_BLACK;
+      if (cell == PX_BILL) color = COLOR_BILL;
+
+      tft.fillRect(x, y, PIX_SCALE, PIX_SCALE, color);
+      tft.drawRect(x, y, PIX_SCALE, PIX_SCALE, TFT_BLACK);
+    }
+  }
+}
+
+void drawHeader() {
+  tft.setTextSize(1);
+  tft.setTextColor(COLOR_YELLOW);
+  tft.setCursor(12, 8);
+  tft.print("QUACK");
+  tft.setTextColor(COLOR_DIM);
+  tft.setCursor(72, 8);
+  tft.print("duck agent");
+  tft.drawFastHLine(8, 22, 304, COLOR_LINE);
+}
+
+void drawStateLabel(DuckState state) {
+  tft.fillRect(8, 178, 304, 22, COLOR_PANEL);
+  tft.drawFastHLine(8, 178, 304, COLOR_LINE);
+  tft.setTextSize(1);
+  tft.setCursor(14, 186);
+
+  if (state == IDLE) {
+    tft.setTextColor(TFT_WHITE);
+    tft.print("idle");
+  } else if (state == LISTENING) {
+    tft.setTextColor(COLOR_GREEN);
+    tft.print("listening");
+  } else if (state == THINKING) {
+    tft.setTextColor(COLOR_CYAN);
+    tft.print("thinking");
+  } else if (state == TALKING) {
+    tft.setTextColor(COLOR_BILL);
+    tft.print("talking");
+  }
+}
+
+void drawTranscript(const String& text) {
+  tft.fillRect(8, 202, 304, 30, COLOR_BG);
+  tft.drawFastHLine(8, 202, 304, COLOR_LINE);
+  tft.setTextSize(1);
+  tft.setTextColor(COLOR_DIM);
+  tft.setCursor(14, 214);
+
+  String line = text;
+  if (line.length() > 44) {
+    line = line.substring(0, 41) + "...";
+  }
+  tft.print(line);
+}
+
+void drawScene() {
+  tft.fillScreen(COLOR_BG);
+  drawHeader();
+
+  const AnimSet set = animFor(currentState);
+  drawPixelGrid(frameAt(set, animFrame));
+
+  drawStateLabel(currentState);
   if (transcript.length() > 0) {
     drawTranscript(transcript);
   }
 }
 
-// ── Draw State Label ──────────────────────
-void drawStateLabel(DuckState state) {
-  tft.setTextSize(2);
-  tft.setCursor(10, 185);
+void resetAnimation() {
+  animFrame = 0;
+  lastAnimMs = millis();
+}
 
-  switch(state) {
-    case IDLE:
-      tft.setTextColor(TEXT_WHITE);
-      tft.print("  Idle...");
-      break;
-    case LISTENING:
-      tft.setTextColor(TEXT_GREEN);
-      tft.print("  Listening...");
-      break;
-    case THINKING:
-      tft.setTextColor(TEXT_CYAN);
-      tft.print("  Thinking...");
-      break;
-    case TALKING:
-      tft.setTextColor(DUCK_YELLOW);
-      tft.print("  Talking!");
-      break;
+void tickAnimation() {
+  const unsigned long now = millis();
+  if (now - lastAnimMs < ANIM_MS) return;
+
+  lastAnimMs = now;
+  const AnimSet set = animFor(currentState);
+  animFrame = (animFrame + 1) % set.count;
+
+  tft.fillRect(PIX_X - 2, PIX_Y - 2, SPRITE_W + 4, SPRITE_H + 4, COLOR_BG);
+  drawPixelGrid(frameAt(set, animFrame));
+}
+
+void setState(DuckState state, const String& line) {
+  const bool stateChanged = state != currentState;
+  currentState = state;
+  transcript = line;
+
+  if (stateChanged) {
+    resetAnimation();
+    drawScene();
+    return;
+  }
+
+  if (line.length() > 0) {
+    drawTranscript(line);
   }
 }
 
-// ── Draw Transcript ───────────────────────
-void drawTranscript(String text) {
-  tft.setTextSize(1);
-  tft.setTextColor(TEXT_WHITE);
-  tft.setCursor(5, 215);
-  // Truncate if too long
-  if (text.length() > 50) {
-    text = text.substring(0, 47) + "...";
+void applyDaemonPayload(const String& payload) {
+  JsonDocument doc;
+  if (deserializeJson(doc, payload)) {
+    Serial.println("Daemon: bad JSON");
+    return;
   }
-  tft.print(text);
+
+  const bool ok = doc["ok"] | false;
+  const char* st = doc["st"] | "?";
+  const int s = doc["s"] | 0;
+  const int w = doc["w"] | 0;
+  const int cs = doc["cs"] | 0;
+  const int cw = doc["cw"] | 0;
+
+  const String nextTranscript =
+    String(st) + "  s:" + String(s) + " w:" + String(w);
+
+  DuckState nextState = IDLE;
+  if (!ok || cs > 0 || cw > 0) {
+    nextState = THINKING;
+  }
+
+  const bool changed =
+    nextState != currentState || nextTranscript != transcript;
+
+  if (!changed) return;
+
+  setState(nextState, nextTranscript);
 }
 
-// ── Touch Check ───────────────────────────
-bool isTouched() {
-  // Wokwi: simulate touch via serial
-  // Real CYD: use XPT2046 library
-  return false; // placeholder
-}
-
-// ── Poll Daemon ───────────────────────────
 void pollDaemon() {
   if (WiFi.status() != WL_CONNECTED) return;
 
   HTTPClient http;
   http.begin(DAEMON_URL);
-  int code = http.GET();
+  const int code = http.GET();
 
   if (code == 200) {
-    String payload = http.getString();
+    const String payload = http.getString();
     Serial.println("Daemon: " + payload);
-    // TODO: parse JSON and update state
+    applyDaemonPayload(payload);
+  } else {
+    Serial.println("Daemon HTTP " + String(code));
   }
   http.end();
 }
 
-// ── Setup ─────────────────────────────────
 void setup() {
   Serial.begin(115200);
 
-  // Init display
+  COLOR_YELLOW = tft.color565(255, 220, 0);
+  COLOR_BILL   = tft.color565(255, 140, 0);
+
   tft.init();
-  tft.setRotation(1); // landscape
-  tft.fillScreen(BG_COLOR);
+  tft.setRotation(3);
+  tft.fillScreen(COLOR_BG);
 
-  // Boot screen
-  tft.setTextColor(DUCK_YELLOW);
-  tft.setTextSize(3);
-  tft.setCursor(60, 100);
-  tft.print("Duck Agent");
+  tft.setTextColor(COLOR_YELLOW);
+  tft.setTextSize(2);
+  tft.setCursor(72, 96);
+  tft.print("QUACK");
   tft.setTextSize(1);
-  tft.setTextColor(TEXT_WHITE);
-  tft.setCursor(80, 140);
-  tft.print("Connecting to WiFi...");
+  tft.setTextColor(COLOR_DIM);
+  tft.setCursor(64, 124);
+  tft.print("connecting wifi...");
 
-  // Connect WiFi
   WiFi.begin(SSID, PASSWORD);
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 20) {
@@ -182,53 +256,43 @@ void setup() {
 
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println("\nWiFi connected: " + WiFi.localIP().toString());
-    tft.setCursor(80, 160);
-    tft.setTextColor(TEXT_GREEN);
-    tft.print("WiFi OK!");
+    tft.setCursor(88, 142);
+    tft.setTextColor(COLOR_GREEN);
+    tft.print("wifi ok");
   } else {
     Serial.println("\nWiFi failed");
-    tft.setCursor(80, 160);
+    tft.setCursor(72, 142);
     tft.setTextColor(TFT_RED);
-    tft.print("WiFi failed - offline mode");
+    tft.print("wifi offline");
   }
 
-  delay(1500);
-
-  // Draw initial duck
-  drawDuckFace(IDLE);
+  delay(1200);
+  resetAnimation();
+  drawScene();
 }
 
-// ── Loop ──────────────────────────────────
 void loop() {
-  unsigned long now = millis();
+  const unsigned long now = millis();
 
-  // Poll daemon every 3s
   if (now - lastPoll > POLL_INTERVAL) {
     lastPoll = now;
     pollDaemon();
   }
 
-  // Demo: cycle through states via Serial input
+  tickAnimation();
+
   if (Serial.available()) {
-    char c = Serial.read();
+    const char c = Serial.read();
     if (c == '1') {
-      currentState = IDLE;
-      transcript = "";
-      drawDuckFace(IDLE);
+      setState(IDLE, "");
     } else if (c == '2') {
-      currentState = LISTENING;
-      transcript = "Listening for voice...";
-      drawDuckFace(LISTENING);
+      setState(LISTENING, "mic open...");
     } else if (c == '3') {
-      currentState = THINKING;
-      transcript = "Processing your question...";
-      drawDuckFace(THINKING);
+      setState(THINKING, "processing...");
     } else if (c == '4') {
-      currentState = TALKING;
-      transcript = "Here's what I think!";
-      drawDuckFace(TALKING);
+      setState(TALKING, "speaking...");
     }
   }
 
-  delay(100);
+  delay(20);
 }
