@@ -1,3 +1,6 @@
+# 1 "/var/folders/lc/hq4vdwxx7rl60tn07sgj8cyw0000gn/T/tmpcyrohzj5"
+#include <Arduino.h>
+# 1 "/Users/amirahnasihah/Developer/AMRHNSHH/quack-prototype/sketch.ino"
 #include <TFT_eSPI.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -7,40 +10,26 @@
 #include <SPI.h>
 #include "pixel_creature.h"
 
-// CYD XPT2046 — VSPI bus (display uses HSPI; TFT_eSPI getTouch does not work)
+
 #define XPT2046_MOSI 32
 #define XPT2046_MISO 39
-#define XPT2046_CLK  25
-#define XPT2046_CS   33
+#define XPT2046_CLK 25
+#define XPT2046_CS 33
 
 SPIClass touchSpi(VSPI);
 const SPISettings touchSpiSettings(2000000, MSBFIRST, SPI_MODE0);
 bool touchReady = false;
-
-// INMP441 on CYD — two JST/dupont headers
-//
-// CN1 (4-pin): 1=3.3V  2=IO27  3=IO22  4=GND  ← power + WS + SCK + GND
-// P3  (4-pin): 1=IO21  2=IO22  3=IO35  4=GND  ← SD on pin 3 (IO35)
-//
-// INMP441 → CYD (wire colours):
-//   VDD  red    → CN1 pin 1 (3.3V)
-//   WS   blue   → CN1 pin 2 (IO27)
-//   SCK  yellow → CN1 pin 3 (IO22)  [same as P3 pin 2]
-//   GND  black  → CN1 pin 4 or P3 pin 4
-//   L/R  black  → GND (mono left)
-//   SD   green  → P3 pin 3 (IO35)   ← extra dupont jumper
-//
-// IO21 = TFT backlight — jangan guna untuk WS
-#define I2S_PORT          I2S_NUM_0
-#define I2S_SAMPLE_RATE   16000
-#define I2S_MIC_SCK       22
-#define I2S_MIC_WS        27
-#define I2S_MIC_SD        35
+# 34 "/Users/amirahnasihah/Developer/AMRHNSHH/quack-prototype/sketch.ino"
+#define I2S_PORT I2S_NUM_0
+#define I2S_SAMPLE_RATE 16000
+#define I2S_MIC_SCK 22
+#define I2S_MIC_WS 27
+#define I2S_MIC_SD 35
 #define I2S_BUFFER_SAMPLES 256
 
 TFT_eSPI tft = TFT_eSPI();
 
-const char* SSID     = "Wokwi-GUEST";
+const char* SSID = "Wokwi-GUEST";
 const char* PASSWORD = "";
 
 const char* DAEMON_URL = "http://192.168.1.200:8787/usage";
@@ -88,35 +77,64 @@ uint8_t animFrame = 0;
 unsigned long lastAnimMs = 0;
 const uint16_t ANIM_MS = 400;
 
-// Duck palette
+
 uint16_t COLOR_YELLOW = 0;
-uint16_t COLOR_BILL   = 0;
-const uint16_t COLOR_BG      = 0x0841;
-const uint16_t COLOR_PANEL   = 0x1082;
-const uint16_t COLOR_LINE    = 0x3186;
-const uint16_t COLOR_DIM     = 0x8C71;
-const uint16_t COLOR_GREEN   = 0x4EC9;
-const uint16_t COLOR_CYAN    = 0x5D9F;
+uint16_t COLOR_BILL = 0;
+const uint16_t COLOR_BG = 0x0841;
+const uint16_t COLOR_PANEL = 0x1082;
+const uint16_t COLOR_LINE = 0x3186;
+const uint16_t COLOR_DIM = 0x8C71;
+const uint16_t COLOR_GREEN = 0x4EC9;
+const uint16_t COLOR_CYAN = 0x5D9F;
 
 const int PIX_SCALE = 9;
-const int PIX_COLS  = 20;
-const int PIX_ROWS  = 20;
-const int SPRITE_W  = PIX_COLS * PIX_SCALE;
-const int SPRITE_H  = PIX_ROWS * PIX_SCALE;
-const int PIX_X     = (320 - SPRITE_W) / 2;
+const int PIX_COLS = 20;
+const int PIX_ROWS = 20;
+const int SPRITE_W = PIX_COLS * PIX_SCALE;
+const int SPRITE_H = PIX_ROWS * PIX_SCALE;
+const int PIX_X = (320 - SPRITE_W) / 2;
 const int AGENT_TOP = 8;
-const int STATUS_Y  = 192;
-const int STATUS_H  = 22;
+const int STATUS_Y = 192;
+const int STATUS_H = 22;
 const int TRANSCRIPT_Y = 218;
-const int DOTS_Y    = 232;
+const int DOTS_Y = 232;
 const int PAGE_TAP_Y_MIN = DOTS_Y - 24;
-const int PIX_Y     = AGENT_TOP + ((STATUS_Y - AGENT_TOP - SPRITE_H) / 2);
+const int PIX_Y = AGENT_TOP + ((STATUS_Y - AGENT_TOP - SPRITE_H) / 2);
 
 struct AnimSet {
   const uint8_t* const* frames;
   uint8_t count;
 };
-
+DuckState duckStateFromText(const char* text);
+void initMic();
+int readMicSimFallback();
+bool isWokwiSim();
+int readMicLevel();
+void pollMic();
+AnimSet animFor(DuckState state);
+const uint8_t* frameAt(const AnimSet& set, uint8_t index);
+void drawPixelGrid(const uint8_t* frame);
+void drawHeader();
+void drawPageDots();
+void drawDetailsPage();
+void drawStateLabel(DuckState state);
+void clearFooterArea();
+void drawFooter();
+void drawTranscript(const String& text);
+void drawScene();
+void resetAnimation();
+void tickAnimation();
+void initTouch();
+int16_t xpt2046BestTwoAvg(int16_t a, int16_t b, int16_t c);
+bool readTouchRaw(int16_t& xraw, int16_t& yraw, int16_t& zraw);
+bool readTouchPoint(int16_t& outX, int16_t& outY);
+void handleTapRelease(int16_t x, int16_t y, int dx, int dy);
+void pollTouchSwipe();
+void applyDaemonPayload(const String& payload);
+void pollDaemon();
+void setup();
+void loop();
+#line 120 "/Users/amirahnasihah/Developer/AMRHNSHH/quack-prototype/sketch.ino"
 DuckState duckStateFromText(const char* text) {
   if (!text || text[0] == '\0') return currentState;
   if (strcmp(text, "idle") == 0) return IDLE;
@@ -612,7 +630,7 @@ void applyDaemonPayload(const String& payload) {
   const char* duckState = doc["duckState"] | "";
   const char* duckLine = doc["transcript"] | "";
 
-  // v1 daemon has no duckState — log only; don't overwrite serial/UI test states
+
   if (duckState[0] == '\0') {
     return;
   }
@@ -649,7 +667,7 @@ void setup() {
   Serial.begin(115200);
 
   COLOR_YELLOW = tft.color565(255, 220, 0);
-  COLOR_BILL   = tft.color565(255, 140, 0);
+  COLOR_BILL = tft.color565(255, 140, 0);
 
   tft.init();
   tft.setRotation(3);

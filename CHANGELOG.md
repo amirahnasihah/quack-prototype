@@ -16,6 +16,37 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/). This is 
 
 ---
 
+## 2026-05-25 — Agent page layout (duck + idle footer)
+
+### Fixed
+
+- **Duck overlap status bar:** Sprite resized and centered in a dedicated band above the footer.
+- **“idle” / daemon junk on agent page:** Footer hidden when state is **IDLE** — no status label, no transcript.
+- **Daemon v1 reset listening:** Poll with `st:"allowed"` (no `duckState`) was overwriting serial `2` → LISTENING every 3s. v1 payloads are now **log-only** until daemon sends `duckState`.
+
+### Changed
+
+- **Agent page matches reference layout:** no header bar — duck → status bar → `mic lvl` line → page dots.
+- Duck **9× scale**, status bar 22px with top/bottom border.
+- Removed per-pixel black grid outline on duck.
+
+---
+
+## 2026-05-25 — Touch swipe fix (CYD VSPI)
+
+### Fixed
+
+- **Swipe/tap tidak jalan dalam Wokwi (dan CYD sebenar):** `TFT_eSPI.getTouch()` guna SPI display (HSPI) — touch XPT2046 pada CYD ada **SPI bus berasingan** (VSPI), jadi sentuhan tak pernah detect.
+
+### Changed
+
+- **Custom XPT2046 driver** pada pin VSPI: CLK=25, MOSI=32, MISO=39, CS=33 — rotation 3, map ke 320×240.
+- **Tap pada page dots** bawah skrin: kiri = page sebelum, kanan = page seterusnya (alternatif swipe, senang dalam sim).
+- Swipe threshold diturunkan (48 → 28 px).
+- Serial log sekali bila touch pertama detect (`Touch at x,y dx=…`) untuk debug calibration.
+
+---
+
 ## 2026-05-24 — Mic sim fallback & CYD wiring
 
 ### Fixed
