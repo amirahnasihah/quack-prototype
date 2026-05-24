@@ -15,7 +15,7 @@
       "id": "mic",
       "top": 80,
       "left": -220,
-      "attrs": {}
+      "attrs": { "gain": "100" }
     },
     {
       "type": "wokwi-microphone",
@@ -32,7 +32,7 @@
     ["mic:GND", "cyd:GND.2", "black", ["h0"]],
     ["mic:L/R", "cyd:GND.2", "black", ["h0"]],
     ["mic:BCK", "cyd:IO22", "green", ["h0"]],
-    ["mic:WS", "cyd:IO21", "blue", ["h0"]],
+    ["mic:WS", "cyd:IO27", "blue", ["h0"]],
     ["mic:DATA", "cyd:IO35", "yellow", ["h0"]],
     ["simMic:1", "cyd:3.3V", "red", ["h0"]],
     ["simMic:2", "cyd:GND.2", "black", ["h0"]]

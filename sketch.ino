@@ -3,15 +3,40 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <driver/i2s.h>
+#include <math.h>
+#include <SPI.h>
+#include <XPT2046_Touchscreen.h>
 #include "pixel_creature.h"
 
-// INMP441 on CYD JST headers (P3 + CN1) — real hardware wiring
-// VDD → CN1 3.3V | GND + L/R → P3 GND
-// SCK → IO22 | WS → IO21 | SD → IO35
+// CYD XPT2046 — separate SPI bus from display (TFT_eSPI getTouch does not work here)
+#define XPT2046_IRQ  36
+#define XPT2046_MOSI 32
+#define XPT2046_MISO 39
+#define XPT2046_CLK  25
+#define XPT2046_CS   33
+
+SPIClass touchSpi(VSPI);
+XPT2046_Touchscreen touchScreen(XPT2046_CS, XPT2046_IRQ);
+bool touchReady = false;
+
+// INMP441 on CYD — two JST/dupont headers
+//
+// CN1 (4-pin): 1=3.3V  2=IO27  3=IO22  4=GND  ← power + WS + SCK + GND
+// P3  (4-pin): 1=IO21  2=IO22  3=IO35  4=GND  ← SD on pin 3 (IO35)
+//
+// INMP441 → CYD (wire colours):
+//   VDD  red    → CN1 pin 1 (3.3V)
+//   WS   blue   → CN1 pin 2 (IO27)
+//   SCK  yellow → CN1 pin 3 (IO22)  [same as P3 pin 2]
+//   GND  black  → CN1 pin 4 or P3 pin 4
+//   L/R  black  → GND (mono left)
+//   SD   green  → P3 pin 3 (IO35)   ← extra dupont jumper
+//
+// IO21 = TFT backlight — jangan guna untuk WS
 #define I2S_PORT          I2S_NUM_0
 #define I2S_SAMPLE_RATE   16000
 #define I2S_MIC_SCK       22
-#define I2S_MIC_WS        21
+#define I2S_MIC_WS        27
 #define I2S_MIC_SD        35
 #define I2S_BUFFER_SAMPLES 256
 
@@ -47,7 +72,8 @@ DuckState currentState = IDLE;
 UiPage currentPage = PAGE_AGENT;
 TouchTrack touchTrack = { false, 0, 0, 0, 0 };
 
-const int SWIPE_MIN_PX = 48;
+const int SWIPE_MIN_PX = 28;
+const int PAGE_TAP_Y_MIN = 210;
 String transcript = "";
 unsigned long lastPoll = 0;
 const int POLL_INTERVAL = 3000;
@@ -101,9 +127,9 @@ void initMic() {
   i2s_config_t config = {
     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
     .sample_rate = I2S_SAMPLE_RATE,
-    .bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT,
+    .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
     .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
-    .communication_format = I2S_COMM_FORMAT_I2S,
+    .communication_format = I2S_COMM_FORMAT_STAND_I2S,
     .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
     .dma_buf_count = 4,
     .dma_buf_len = I2S_BUFFER_SAMPLES,
@@ -127,28 +153,64 @@ void initMic() {
     Serial.println("Mic: pin config failed");
     return;
   }
-  i2s_set_clk(I2S_PORT, I2S_SAMPLE_RATE, I2S_BITS_PER_SAMPLE_32BIT, I2S_CHANNEL_MONO);
+  i2s_set_clk(I2S_PORT, I2S_SAMPLE_RATE, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_MONO);
   i2s_zero_dma_buffer(I2S_PORT);
   micReady = true;
-  Serial.println("Mic: INMP441 ready (SCK=22 WS=21 SD=35)");
+  Serial.println("Mic: INMP441 ready (SCK=22 WS=27 SD=35)");
+}
+
+int readMicSimFallback() {
+  return 600 + (int)(fabs(sin(millis() / 180.0)) * 400.0);
+}
+
+bool isWokwiSim() {
+  return WiFi.SSID() == "Wokwi-GUEST";
 }
 
 int readMicLevel() {
-  int32_t samples[I2S_BUFFER_SAMPLES];
+  int16_t samples[I2S_BUFFER_SAMPLES];
   size_t bytesRead = 0;
 
-  if (i2s_read(I2S_PORT, samples, sizeof(samples), &bytesRead, pdMS_TO_TICKS(50)) != ESP_OK) {
-    return 0;
+  const esp_err_t readOk =
+    i2s_read(I2S_PORT, samples, sizeof(samples), &bytesRead, pdMS_TO_TICKS(50));
+
+  if (readOk != ESP_OK) {
+    static bool readErrLogged = false;
+    if (!readErrLogged && isWokwiSim()) {
+      readErrLogged = true;
+      Serial.println("Mic: i2s_read failed — sim fallback active");
+    }
+    return isWokwiSim() ? readMicSimFallback() : 0;
   }
 
-  const size_t count = bytesRead / sizeof(int32_t);
-  if (count == 0) return 0;
+  const size_t count = bytesRead / sizeof(int16_t);
+  if (count == 0) {
+    static bool emptyLogged = false;
+    if (!emptyLogged && isWokwiSim()) {
+      emptyLogged = true;
+      Serial.println("Mic: i2s_read empty — sim fallback active");
+    }
+    return isWokwiSim() ? readMicSimFallback() : 0;
+  }
 
   int64_t sum = 0;
+  int32_t peak = 0;
   for (size_t i = 0; i < count; i++) {
-    const int32_t sample = samples[i] >> 14;
-    sum += sample < 0 ? -sample : sample;
+    const int32_t sample = samples[i];
+    const int32_t absSample = sample < 0 ? -sample : sample;
+    sum += absSample;
+    if (absSample > peak) peak = absSample;
   }
+
+  if (peak == 0 && isWokwiSim()) {
+    static bool silentLogged = false;
+    if (!silentLogged) {
+      silentLogged = true;
+      Serial.println("Mic: I2S silent — sim fallback active");
+    }
+    return readMicSimFallback();
+  }
+
   return (int)(sum / count);
 }
 
@@ -379,21 +441,54 @@ void prevPage() {
 }
 
 void initTouch() {
-#ifdef TOUCH_CS
-  // CYD XPT2046 calibration for setRotation(3)
-  uint16_t cal[5] = { 388, 3500, 340, 3500, 7 };
-  tft.setTouch(cal);
-  Serial.println("Touch: swipe left/right enabled");
-#else
-  Serial.println("Touch: unavailable (no TOUCH_CS)");
-#endif
+  touchSpi.begin(XPT2046_CLK, XPT2046_MISO, XPT2046_MOSI, XPT2046_CS);
+  touchScreen.begin(touchSpi);
+  touchScreen.setRotation(3);
+  touchReady = true;
+  Serial.println("Touch: XPT2046 ready — swipe or tap dots at bottom");
+}
+
+bool readTouchPoint(int16_t& outX, int16_t& outY) {
+  if (!touchReady || !touchScreen.touched()) {
+    return false;
+  }
+
+  const TS_Point p = touchScreen.getPoint();
+  outX = map(p.x, 200, 3700, 0, 320);
+  outY = map(p.y, 240, 3800, 0, 240);
+  return true;
+}
+
+void handleTapRelease(int16_t x, int16_t y, int dx, int dy) {
+  const bool isTap =
+    abs(dx) < SWIPE_MIN_PX && abs(dy) < SWIPE_MIN_PX;
+
+  if (isTap && y >= PAGE_TAP_Y_MIN) {
+    if (x < 150) {
+      prevPage();
+      return;
+    }
+    if (x > 170) {
+      nextPage();
+      return;
+    }
+  }
+
+  if (abs(dx) >= SWIPE_MIN_PX && abs(dx) > abs(dy)) {
+    if (dx < 0) {
+      nextPage();
+    } else {
+      prevPage();
+    }
+  }
 }
 
 void pollTouchSwipe() {
-#ifdef TOUCH_CS
-  uint16_t x = 0;
-  uint16_t y = 0;
-  const bool pressed = tft.getTouch(&x, &y);
+  if (!touchReady) return;
+
+  int16_t x = 0;
+  int16_t y = 0;
+  const bool pressed = readTouchPoint(x, y);
 
   if (pressed && !touchTrack.active) {
     touchTrack.active = true;
@@ -415,15 +510,17 @@ void pollTouchSwipe() {
     const int dx = touchTrack.lastX - touchTrack.startX;
     const int dy = touchTrack.lastY - touchTrack.startY;
 
-    if (abs(dx) >= SWIPE_MIN_PX && abs(dx) > abs(dy)) {
-      if (dx < 0) {
-        nextPage();
-      } else {
-        prevPage();
-      }
+    static bool touchDebugOnce = false;
+    if (!touchDebugOnce) {
+      touchDebugOnce = true;
+      Serial.println(
+        "Touch at " + String(touchTrack.lastX) + "," + String(touchTrack.lastY) +
+        " dx=" + String(dx)
+      );
     }
+
+    handleTapRelease(touchTrack.lastX, touchTrack.lastY, dx, dy);
   }
-#endif
 }
 
 void setState(DuckState state, const String& line) {

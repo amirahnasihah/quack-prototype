@@ -1,154 +1,178 @@
 # Quack Prototype
 
-A Wokwi-simulated **Duck Agent** display: an ESP32 with a TFT screen that shows an animated duck face and reflects voice-assistant states (idle, listening, thinking, talking). The firmware polls a companion daemon on your Mac for usage/state updates over WiFi.
+Pixel **duck agent** UI on **ESP32-2432S028R** (Cheap Yellow Display), with WiFi, Mac daemon polling, INMP441 mic, and touch swipe pages. Developed in **Cursor + Wokwi**; flashable to real CYD hardware.
 
-## Overview
+**Author:** [amirahnasihah](https://github.com/amirahnasihah)
 
-This repo is a hardware prototype for a physical “duck” UI that mirrors what a desktop AI agent is doing. The duck’s expression and on-screen label change with agent state, and a transcript line can show what it heard or is saying.
+---
 
-| State       | Display              | Duck expression                          |
-|-------------|----------------------|------------------------------------------|
-| `IDLE`      | Idle...              | Normal eyes                              |
-| `LISTENING` | Listening...         | Wide eyes, raised brows                  |
-| `THINKING`  | Thinking...          | Squint + sweat drop                      |
-| `TALKING`   | Talking!             | Open bill (mouth)                        |
+## What it does
 
-The project was exported from [Wokwi](https://wokwi.com/projects/464420696806840321) and is meant to run in the simulator or on real ESP32 + ILI9341 hardware (e.g. Cheap Yellow Display–style boards).
+| Feature | Description |
+|---------|-------------|
+| Pixel duck | 20×20 sprites — idle, listening, thinking, talking |
+| Daemon poll | `GET /usage` every 3s → state + transcript |
+| INMP441 mic | I2S 16 kHz; level shown in LISTENING mode |
+| Touch UI | Swipe left/right — agent page ↔ model details |
+| Wokwi sim | CYD board + INMP441 custom chip |
 
-## Hardware
+---
 
-From `diagram.json`:
+## Quick start (Wokwi in Cursor)
 
-- **MCU:** ESP32 DevKit V1
-- **Display:** ILI9341 TFT (SPI), landscape (`rotation` 1 in firmware)
-- **Touch (planned):** XPT2046 — listed in `libraries.txt`; touch handling is still a placeholder in code
+1. Install **PlatformIO** + **Wokwi Simulator** extensions.
+2. `Cmd+Shift+P` → **Wokwi: Request a new License** (once).
+3. Build:
+   ```bash
+   pio run
+   ```
+4. **Wokwi: Start Simulator** (restart after chip/firmware changes).
+5. Open **Wokwi Terminal** (bottom panel) → type **`2`** → Enter.
 
-### Pin wiring (simulator / diagram)
+### Serial keys
 
-| ESP32 GPIO | ILI9341 |
-|------------|---------|
-| GND        | GND     |
-| 3V3        | VCC     |
-| 14         | SCK     |
-| 13         | MOSI    |
-| 12         | MISO    |
-| 15         | CS      |
-| 2          | DC      |
-| 4          | RST     |
+| Key | Action |
+|-----|--------|
+| `1` | Idle |
+| `2` | **Listening** (mic test) |
+| `3` | Thinking |
+| `4` | Talking |
+| `[` / `p` | Previous page |
+| `]` / `n` | Next page |
 
-## Software stack
+Type in **Wokwi Terminal**, not in the board picture or Cursor chat.
 
-- **Platform:** Arduino on ESP32
-- **Libraries:** `TFT_eSPI`, `WiFi`, `HTTPClient` (see `libraries.txt` for Wokwi deps: Adafruit ILI9341, TFT_eSPI, XPT2046_Touchscreen)
+---
+
+## INMP441 wiring (real CYD)
+
+**P3 has no 3.3V** — power the mic from **CN1 pin 1**.
+
+### CN1 (4-pin JST 1.25mm)
+
+| Pin | GPIO / power | → INMP441 |
+|-----|--------------|-----------|
+| 1 | **3.3V** | VDD (red) |
+| 2 | **IO27** | WS (blue) |
+| 3 | **IO22** | SCK (yellow) |
+| 4 | **GND** | GND + L/R (black) |
+
+### P3 (4-pin) — extra jumper
+
+| Pin | GPIO | → INMP441 |
+|-----|------|-----------|
+| 3 | **IO35** | SD (green) |
+
+```
+INMP441          CN1                    P3
+VDD  ──red──────► 1  3.3V
+WS   ──blue─────► 2  IO27
+SCK  ──yellow───► 3  IO22
+GND  ──black────► 4  GND
+L/R  ──black────► GND
+SD   ──green──────────────────────────► 3  IO35
+```
+
+**Do not** use **IO21** (P3 pin 1) for mic WS — it is **TFT backlight**.
+
+**Parts to buy:** JST 1.25mm 4-pin → dupont (for CN1) + one dupont jumper for SD.
+
+---
+
+## Mic test — what to expect
+
+### Real hardware
+
+1. Wire as above, flash firmware.
+2. Serial **`2`**.
+3. Speak near mic → `Mic level: …` should **rise** (no fallback message).
+
+### Wokwi simulator
+
+I2S between ESP32 sim and custom INMP441 chip is ** imperfect**. When `i2s_read` gets no audio:
+
+- Serial (once): `Mic: i2s_read empty — sim fallback active`
+- Levels **~600–1000** oscillating — **UI test only**, not real audio.
+
+| Output | Meaning |
+|--------|---------|
+| `Mic level: 600+` (wave) | Sim OK — listening UI works |
+| `Mic: sim fallback active` | Expected in Wokwi; I2S sim silent |
+| Real CYD + mic | No fallback; levels from actual sound |
+
+After firmware/chip changes: `pio run` → **Restart Simulation** → `2`.
+
+---
+
+## Configuration
+
+Edit top of `sketch.ino`:
+
+```cpp
+const char* SSID     = "Wokwi-GUEST";   // or your WiFi
+const char* PASSWORD = "";
+const char* DAEMON_URL = "http://192.168.1.200:8787/usage";
+```
+
+---
 
 ## Architecture
 
 ```
-┌─────────────────┐     WiFi HTTP GET      ┌──────────────────────┐
-│  ESP32 + TFT    │  ───────────────────►  │  Mac daemon          │
-│  (this sketch)  │  /usage every 3s       │  :8787               │
-└─────────────────┘                        └──────────────────────┘
+┌──────────────────┐   WiFi GET /usage    ┌─────────────────┐
+│  CYD + INMP441   │ ◄──────────────────► │  Mac daemon     │
+│  pixel duck UI   │   every 3s           │  :8787          │
+└──────────────────┘                      └─────────────────┘
         │
-        └── Renders duck face + state label + transcript on ILI9341
+        ├── Page 0: duck + state + transcript
+        └── Page 1: model info (by amirahnasihah)
 ```
 
-- **`sketch.ino`** — main firmware: display drawing, WiFi, daemon polling, serial demo controls
-- **`diagram.json`** — Wokwi circuit (ESP32 + ILI9341)
-- **`libraries.txt`** — Wokwi library manifest
-- **`wokwi-project.txt`** — link back to the original Wokwi project
+---
 
-## Getting started
-
-### 1. Run in Cursor (local build — skips Wokwi cloud queue)
-
-Use this when wokwi.com shows **“Build Servers Busy”**. You compile on your Mac; the extension only runs the simulator.
-
-**One-time setup**
-
-1. Install extensions in Cursor:
-   - [Wokwi Simulator](https://marketplace.visualstudio.com/items?itemName=wokwi.wokwi-vscode) (`wokwi.wokwi-vscode`)
-   - [PlatformIO IDE](https://marketplace.visualstudio.com/items?itemName=platformio.platformio-ide)
-2. `Cmd+Shift+P` → **Wokwi: Request a new License** (free trial; paid plan only needed after trial ends).
-3. Open this folder in Cursor.
-
-**Every run**
-
-1. `Cmd+Shift+P` → **PlatformIO: Build** (or terminal: `pio run` in this folder).
-2. Wait until `.pio/build/esp32dev/firmware.bin` exists.
-3. `Cmd+Shift+P` → **Wokwi: Start Simulator**.
-4. Serial monitor in the sim panel, **115200** baud — send `1`–`4` to change duck states.
-
-`wokwi.toml` points at the PlatformIO build output. `platformio.ini` configures TFT pins to match `diagram.json`.
-
-### 2. Simulate in Wokwi (browser)
-
-1. Open [Wokwi](https://wokwi.com) and import this folder (or use the project linked in `wokwi-project.txt`).
-2. Ensure `libraries.txt` dependencies install (TFT_eSPI, etc.).
-3. Build and run the simulation.
-
-If the cloud build queue is busy, use **§1** instead.
-
-Default WiFi in the sketch is `Wokwi-GUEST` with an empty password, which matches the Wokwi guest network.
-
-### 3. Configure for your environment
-
-Edit the top of `sketch.ino`:
-
-```cpp
-const char* SSID     = "your-wifi-ssid";
-const char* PASSWORD = "your-wifi-password";
-const char* DAEMON_URL = "http://<your-mac-ip>:8787/usage";
-```
-
-- **`DAEMON_URL`** — point at your Mac (or host) running the usage daemon on port `8787`.
-- **`POLL_INTERVAL`** — defaults to `3000` ms between HTTP polls.
-
-### 4. Flash to hardware (optional)
-
-Use the Arduino IDE or PlatformIO with an ESP32 board support package. Match `TFT_eSPI` pin defines to your physical wiring (the Wokwi diagram pins may differ on a CYD board — check your board’s pinout).
-
-## Serial demo controls
-
-While connected over serial (`115200` baud), send a single character to cycle states without the daemon:
-
-| Key | State       |
-|-----|-------------|
-| `1` | IDLE        |
-| `2` | LISTENING   |
-| `3` | THINKING    |
-| `4` | TALKING     |
-
-Useful for testing the display logic before the Mac daemon is wired up.
-
-## Daemon integration
-
-`pollDaemon()` performs `GET` on `DAEMON_URL` when WiFi is connected. On HTTP 200, the response body is logged to serial. **JSON parsing and state updates from the daemon are not implemented yet** (`TODO` in `sketch.ino`).
-
-Expected direction: parse usage/state JSON from the daemon and map fields to `currentState`, `transcript`, and `drawDuckFace()`.
-
-## Project status
-
-| Area              | Status                                      |
-|-------------------|---------------------------------------------|
-| Duck face UI      | Implemented (4 states)                      |
-| WiFi connect      | Implemented                                 |
-| Daemon HTTP poll  | Partial (GET only; no JSON → state yet)     |
-| Touch input       | Placeholder (`isTouched()` returns false)   |
-| Real CYD touch    | Planned via XPT2046 library                 |
-
-## File layout
+## Project layout
 
 ```
 quack-prototype/
-├── README.md          # This file
-├── sketch.ino         # ESP32 firmware
-├── platformio.ini     # Local build (PlatformIO)
-├── wokwi.toml         # Wokwi extension → firmware paths
-├── diagram.json       # Wokwi hardware diagram
-├── libraries.txt      # Wokwi library dependencies
-└── wokwi-project.txt  # Original Wokwi project reference
+├── README.md           ← you are here
+├── CHANGELOG.md        ← history of changes
+├── sketch.ino          ← firmware
+├── pixel_creature.h    ← duck sprites
+├── platformio.ini      ← CYD TFT + touch pins
+├── wokwi.toml          ← sim firmware + INMP441 chip
+├── diagram.json        ← Wokwi circuit
+├── chips/
+│   ├── inmp441.chip.c
+│   ├── inmp441.chip.json
+│   └── inmp441.chip.wasm
+└── wokwi-project.txt
 ```
+
+### Rebuild INMP441 Wokwi chip
+
+```bash
+./.tools/wokwi-cli chip compile chips/inmp441.chip.c -o chips/inmp441.chip.wasm
+```
+
+(`wokwi-cli` binary is gitignored under `.tools/` — download from [wokwi-cli releases](https://github.com/wokwi/wokwi-cli/releases).)
+
+---
+
+## Status
+
+| Area | Status |
+|------|--------|
+| Pixel duck + states | Done |
+| Daemon JSON | Done |
+| Touch swipe pages | Done |
+| INMP441 hardware | Wired per CN1/P3 guide |
+| Wokwi mic I2S | Sim fallback; real I2S sim WIP |
+| STT / daemon v2 | Planned |
+
+See **[CHANGELOG.md](./CHANGELOG.md)** for dated details.
+
+---
 
 ## License
 
-No license file is included yet. Add one if you plan to share or open-source the project.
+No license file yet. Add one if you open-source the project.
