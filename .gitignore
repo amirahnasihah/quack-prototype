@@ -22,3 +22,8 @@ Thumbs.db
 # Logs & temp
 *.log
 tmp/
+
+# Wokwi CLI (local download for chip compile)
+.tools/
+chips/wokwi-api.h
+

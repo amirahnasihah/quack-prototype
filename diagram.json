@@ -9,11 +9,33 @@
       "top": 0,
       "left": 0,
       "attrs": {}
+    },
+    {
+      "type": "chip-inmp441",
+      "id": "mic",
+      "top": 80,
+      "left": -220,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-microphone",
+      "id": "simMic",
+      "top": -120,
+      "left": -220,
+      "attrs": {}
     }
   ],
   "connections": [
     ["cyd:TX", "$serialMonitor:RX", "", []],
-    ["cyd:RX", "$serialMonitor:TX", "", []]
+    ["cyd:RX", "$serialMonitor:TX", "", []],
+    ["mic:VCC", "cyd:3.3V", "red", ["h0"]],
+    ["mic:GND", "cyd:GND.2", "black", ["h0"]],
+    ["mic:L/R", "cyd:GND.2", "black", ["h0"]],
+    ["mic:BCK", "cyd:IO22", "green", ["h0"]],
+    ["mic:WS", "cyd:IO21", "blue", ["h0"]],
+    ["mic:DATA", "cyd:IO35", "yellow", ["h0"]],
+    ["simMic:1", "cyd:3.3V", "red", ["h0"]],
+    ["simMic:2", "cyd:GND.2", "black", ["h0"]]
   ],
   "dependencies": {}
 }
