@@ -1,0 +1,53 @@
+name: Apply Rulesets
+
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: Apply repo-level or org-level rulesets
+        required: true
+        type: choice
+        options:
+          - repo
+          - org
+      mode:
+        description: Enforcement mode
+        required: true
+        type: choice
+        options:
+          - evaluate
+          - active
+      dry_run:
+        description: Print actions without applying
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Apply rulesets
+        env:
+          GH_TOKEN: ${{ secrets.RULESETS_PAT }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPOSITORY_NAME: ${{ github.event.repository.name }}
+        run: |
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "Missing secret RULESETS_PAT (PAT with admin:repo; add admin:org for org scope)." >&2
+            exit 1
+          fi
+          chmod +x scripts/apply-rulesets.sh
+          args=("${{ github.event.inputs.scope }}")
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            args+=("--dry-run")
+          elif [ "${{ github.event.inputs.mode }}" = "evaluate" ]; then
+            args+=("--evaluate")
+          fi
+          ./scripts/apply-rulesets.sh "${args[@]}"

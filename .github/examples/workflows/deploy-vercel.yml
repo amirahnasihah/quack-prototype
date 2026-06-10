@@ -1,0 +1,111 @@
+# INACTIVE — copy to .github/workflows/ to enable. See ../README.md
+name: Deploy — Vercel
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+  release:
+    types: [published]
+
+concurrency:
+  group: deploy-vercel-${{ github.event_name == 'release' && 'production' || github.event_name == 'pull_request' && format('preview-{0}', github.event.pull_request.number) || github.event.inputs.environment || 'staging' }}
+  cancel-in-progress: true
+
+jobs:
+  resolve-environment:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+      vercel-args: ${{ steps.env.outputs.vercel-args }}
+    steps:
+      - name: Resolve environment
+        id: env
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "environment=production" >> "$GITHUB_OUTPUT"
+            echo "vercel-args=--prod" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "environment=preview" >> "$GITHUB_OUTPUT"
+            echo "vercel-args=" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "environment=${{ github.event.inputs.environment }}" >> "$GITHUB_OUTPUT"
+            if [ "${{ github.event.inputs.environment }}" = "production" ]; then
+              echo "vercel-args=--prod" >> "$GITHUB_OUTPUT"
+            else
+              echo "vercel-args=" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "environment=staging" >> "$GITHUB_OUTPUT"
+            echo "vercel-args=" >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy:
+    needs: resolve-environment
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-environment.outputs.environment == 'preview' && 'staging' || needs.resolve-environment.outputs.environment }}
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: |
+          if [ -f package.json ]; then
+            bun install --frozen-lockfile
+          fi
+
+      - name: Deploy to Vercel
+        id: vercel
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-args: ${{ needs.resolve-environment.outputs.vercel-args }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Comment preview URL on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const url = '${{ steps.vercel.outputs.preview-url }}';
+            if (!url) return;
+            const body = `🚀 **Vercel preview:** ${url}`;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body?.includes('Vercel preview'));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }

@@ -1,0 +1,103 @@
+# INACTIVE — copy to .github/workflows/ to enable. See ../README.md
+name: Deploy — Hetzner (SSH + Docker)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      image-tag:
+        description: Docker image tag to deploy (defaults to commit SHA)
+        required: false
+        type: string
+  push:
+    branches: [main]
+  release:
+    types: [published]
+
+concurrency:
+  group: deploy-hetzner-${{ github.event_name == 'release' && 'production' || github.event.inputs.environment || 'staging' }}
+  cancel-in-progress: false
+
+jobs:
+  resolve-environment:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+      image-tag: ${{ steps.env.outputs.image-tag }}
+    steps:
+      - name: Resolve environment
+        id: env
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "environment=production" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "environment=${{ github.event.inputs.environment }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "environment=staging" >> "$GITHUB_OUTPUT"
+          fi
+
+          tag="${{ github.event.inputs.image-tag }}"
+          if [ -z "$tag" ]; then
+            tag="${{ github.sha }}"
+          fi
+          echo "image-tag=$tag" >> "$GITHUB_OUTPUT"
+
+  build-image:
+    needs: resolve-environment
+    uses: ./.github/workflows/reusable-deploy-docker.yml
+    with:
+      image-name: app
+      dockerfile: infra/docker/Dockerfile
+      context: .
+    secrets:
+      REGISTRY_USERNAME: ${{ github.actor }}
+      REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+
+  deploy:
+    needs: [resolve-environment, build-image]
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-environment.outputs.environment }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Copy compose file to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || 22 }}
+          source: "infra/docker/compose.yml"
+          target: ${{ secrets.DEPLOY_PATH || '/opt/app' }}
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          IMAGE_TAG: ghcr.io/${{ github.repository_owner }}/app:${{ github.sha }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/opt/app' }}
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || 22 }}
+          envs: IMAGE_TAG,DEPLOY_PATH,GHCR_PULL_TOKEN
+          script: |
+            set -euo pipefail
+            if [ -n "${GHCR_PULL_TOKEN:-}" ]; then
+              echo "$GHCR_PULL_TOKEN" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            fi
+            cd "$DEPLOY_PATH/infra/docker"
+            export IMAGE_TAG
+            docker compose pull
+            docker compose up -d --remove-orphans
+            docker image prune -f

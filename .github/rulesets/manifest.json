@@ -1,0 +1,13 @@
+{
+  "repo": [
+    "repo/main-branch.json",
+    "repo/release-branch.json",
+    "repo/protect-tags.json",
+    "repo/block-secrets-push.json"
+  ],
+  "org": [
+    "org/default-branches.json",
+    "org/protect-tags.json",
+    "org/block-secrets-push.json"
+  ]
+}

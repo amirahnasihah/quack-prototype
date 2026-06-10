@@ -1,0 +1,106 @@
+# INACTIVE — copy to .github/workflows/ to enable. See ../README.md
+name: Deploy — Cloudflare
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      wrangler-config:
+        description: Path to wrangler.toml
+        required: false
+        type: string
+        default: wrangler.toml
+  push:
+    branches: [main]
+    paths:
+      - "wrangler.toml"
+      - "wrangler.jsonc"
+      - "infra/cloudflare/**"
+      - "src/**"
+      - "apps/**"
+      - "packages/**"
+  release:
+    types: [published]
+
+concurrency:
+  group: deploy-cloudflare-${{ github.event_name == 'release' && 'production' || github.event.inputs.environment || 'staging' }}
+  cancel-in-progress: false
+
+jobs:
+  resolve-environment:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+      wrangler-dir: ${{ steps.env.outputs.wrangler-dir }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Resolve environment
+        id: env
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            environment="production"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            environment="${{ github.event.inputs.environment }}"
+          else
+            environment="staging"
+          fi
+
+          wrangler_config="${{ github.event.inputs.wrangler-config || 'wrangler.toml' }}"
+          if [ ! -f "$wrangler_config" ] && [ -f infra/cloudflare/wrangler.toml ]; then
+            wrangler_config="infra/cloudflare/wrangler.toml"
+          fi
+
+          wrangler_dir=$(dirname "$wrangler_config")
+          if [ "$wrangler_dir" = "." ]; then
+            wrangler_dir="."
+          fi
+
+          echo "environment=$environment" >> "$GITHUB_OUTPUT"
+          echo "wrangler-dir=$wrangler_dir" >> "$GITHUB_OUTPUT"
+          echo "Using wrangler config at: $wrangler_config (dir: $wrangler_dir)"
+
+  deploy:
+    needs: resolve-environment
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-environment.outputs.environment }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: |
+          if [ -f package.json ]; then
+            bun install --frozen-lockfile
+          fi
+
+      - name: Build project
+        run: |
+          if [ -f package.json ] && bun run --print build &>/dev/null 2>&1; then
+            bun run build
+          else
+            echo "No build script — skipping."
+          fi
+
+      - name: Deploy with Wrangler
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4"
+          command: deploy
+          workingDirectory: ${{ needs.resolve-environment.outputs.wrangler-dir }}
+        env:
+          CLOUDFLARE_ENV: ${{ needs.resolve-environment.outputs.environment }}

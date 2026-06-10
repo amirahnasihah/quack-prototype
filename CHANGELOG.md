@@ -8,6 +8,10 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/). This is 
 
 ## [Unreleased]
 
+### Added
+
+- **MAX98357 speaker test:** I2S TX on **IO26** (shared BCLK 22 / WS 27 with mic). Serial **`5`** → 440 Hz beep ~0.6s.
+
 ### Planned
 
 - Mac daemon v2 (`duckState`, `transcript`, `POST /audio`)
