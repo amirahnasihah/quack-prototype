@@ -155,11 +155,14 @@ jobs:
           
           # Add labels (each separately - gh pr create requires --label per label)
           if [ -n "${{ env.LABELS }}" ] && [ "${{ env.LABELS }}" != "" ]; then
-            label_args=$(echo '${{ env.LABELS }}' | tr ',' '\n' | while IFS= read -r lbl; do
+            label_args=""
+            while IFS= read -r lbl; do
               lbl=$(echo "$lbl" | xargs)
-              [ -n "$lbl" ] && printf ' --label "%s"' "$lbl"
-            done)
-            PR_CMD="$PR_CMD $label_args"
+              if [ -n "$lbl" ]; then
+                label_args="$label_args --label \"$lbl\""
+              fi
+            done < <(printf '%s\n' '${{ env.LABELS }}' | tr ',' '\n')
+            PR_CMD="$PR_CMD$label_args"
           fi
           
           # Add assignee if exists
@@ -172,10 +175,12 @@ jobs:
             pr_num=$(gh pr list --head "${{ env.NEW_BRANCH_NAME }}" --json number --jq '.[0].number')
             if [ -n "$pr_num" ] && [ -n "${{ env.LABELS }}" ]; then
               echo "PR exists, adding labels to #$pr_num..."
-              echo '${{ env.LABELS }}' | tr ',' '\n' | while IFS= read -r lbl; do
+              while IFS= read -r lbl; do
                 lbl=$(echo "$lbl" | xargs)
-                [ -n "$lbl" ] && gh pr edit "$pr_num" --add-label "$lbl" 2>/dev/null || true
-              done
+                if [ -n "$lbl" ]; then
+                  gh pr edit "$pr_num" --add-label "$lbl" 2>/dev/null || true
+                fi
+              done < <(printf '%s\n' '${{ env.LABELS }}' | tr ',' '\n')
             fi
             echo "PR may already exist, continuing..."
           }
