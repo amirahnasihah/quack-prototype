@@ -1,6 +1,13 @@
 # PlatformIO — build output & downloaded libs (rebuilt via `pio run`)
 .pio/
 
+# Python — voice-agent virtualenv & caches (rebuilt via `pip install -r requirements.txt`)
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
 # Secrets / local config (never commit WiFi keys, API keys)
 .env
 .env.*

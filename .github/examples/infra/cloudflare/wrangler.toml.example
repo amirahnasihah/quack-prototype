@@ -1,0 +1,17 @@
+# Copy to wrangler.toml and fill in values.
+# Docs: https://developers.cloudflare.com/workers/wrangler/configuration/
+
+name = "my-app"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+# Uncomment for Workers with assets / Pages
+# [assets]
+# directory = "./dist"
+
+# Environment-specific overrides (used with CLOUDFLARE_ENV=staging|production)
+# [env.staging]
+# name = "my-app-staging"
+
+# [env.production]
+# name = "my-app-production"

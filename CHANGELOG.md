@@ -8,6 +8,10 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/). This is 
 
 ## [Unreleased]
 
+### Added
+
+- **MAX98357 speaker test:** I2S TX on **IO26** (shared BCLK 22 / WS 27 with mic). Serial `**5`** → 440 Hz beep ~0.6s.
+
 ### Planned
 
 - Mac daemon v2 (`duckState`, `transcript`, `POST /audio`)
@@ -57,7 +61,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/). This is 
 
 ### Added
 
-- **Sim fallback tone:** When I2S is silent in Wokwi, fake mic level ~600–1000 (sine wave) so listening UI and serial output remain testable. Serial logs `Mic: i2s_read empty — sim fallback active` (or similar) once.
+- **Sim fallback tone:** Wheokan I2S is silent in Wokwi, fake mic level ~600–1000 (sine wave) so listening UI and serial output remain testable. Serial logs `Mic: i2s_read empty — sim fallback active` (or similar) once.
 - **CN1 + P3 wiring guide** in `sketch.ino` comments and README (INMP441 power from CN1 pin 1 — P3 has no 3.3V).
 
 ### Changed
@@ -107,3 +111,4 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/). This is 
 ### Added
 
 - Initial Wokwi project: ESP32 + ILI9341, duck state machine, HTTP poll stub.
+

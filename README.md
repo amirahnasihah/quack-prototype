@@ -136,6 +136,7 @@ const char* DAEMON_URL = "http://192.168.1.200:8787/usage";
 quack-prototype/
 ├── README.md           ← you are here
 ├── CHANGELOG.md        ← history of changes
+├── docs/               ← design docs (overview, hardware, architecture, roadmap)
 ├── sketch.ino          ← firmware
 ├── pixel_creature.h    ← duck sprites
 ├── platformio.ini      ← CYD TFT + touch pins
@@ -169,7 +170,12 @@ quack-prototype/
 | Wokwi mic I2S | Sim fallback; real I2S sim WIP |
 | STT / daemon v2 | Planned |
 
-See **[CHANGELOG.md](./CHANGELOG.md)** for dated details.
+See **[CHANGELOG.md](./CHANGELOG.md)** for dated details, and **[docs/](./docs/)** for the design docs:
+
+- [docs/00-overview.md](./docs/00-overview.md) — what quack quack is, the two-board story (CYD + Waveshare)
+- [docs/01-hardware.md](./docs/01-hardware.md) — full specs + wiring for both boards (this repo = CYD)
+- [docs/02-architecture.md](./docs/02-architecture.md) — voice agent pipeline (board-agnostic)
+- [docs/03-roadmap.md](./docs/03-roadmap.md) — phases and per-board status
 
 ---
 

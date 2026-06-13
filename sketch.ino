@@ -30,12 +30,21 @@ bool touchReady = false;
 //   L/R  black  → GND (mono left)
 //   SD   green  → P3 pin 3 (IO35)   ← extra dupont jumper
 //
+// MAX98357 I2S amp — share BCLK + WS with mic
+//   VIN  red    → CN1 pin 1 (3.3V)
+//   GND  black  → GND
+//   BCLK yellow → IO22 (same as mic SCK)
+//   LRC  blue   → IO27 (same as mic WS)
+//   DIN  green  → IO26
+//   SD   (module) → tie to 3.3V if no sound (unmute left channel)
+//
 // IO21 = TFT backlight — jangan guna untuk WS
 #define I2S_PORT          I2S_NUM_0
 #define I2S_SAMPLE_RATE   16000
 #define I2S_MIC_SCK       22
 #define I2S_MIC_WS        27
 #define I2S_MIC_SD        35
+#define I2S_SPK_DIN       26
 #define I2S_BUFFER_SAMPLES 256
 
 TFT_eSPI tft = TFT_eSPI();
@@ -128,7 +137,7 @@ DuckState duckStateFromText(const char* text) {
 
 void initMic() {
   i2s_config_t config = {
-    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
+    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_TX),
     .sample_rate = I2S_SAMPLE_RATE,
     .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
     .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
@@ -137,14 +146,14 @@ void initMic() {
     .dma_buf_count = 4,
     .dma_buf_len = I2S_BUFFER_SAMPLES,
     .use_apll = false,
-    .tx_desc_auto_clear = false,
+    .tx_desc_auto_clear = true,
     .fixed_mclk = 0
   };
 
   i2s_pin_config_t pins = {
     .bck_io_num = I2S_MIC_SCK,
     .ws_io_num = I2S_MIC_WS,
-    .data_out_num = I2S_PIN_NO_CHANGE,
+    .data_out_num = I2S_SPK_DIN,
     .data_in_num = I2S_MIC_SD
   };
 
@@ -160,6 +169,42 @@ void initMic() {
   i2s_zero_dma_buffer(I2S_PORT);
   micReady = true;
   Serial.println("Mic: INMP441 ready (SCK=22 WS=27 SD=35)");
+  Serial.println("Spk: MAX98357 ready (DIN=26) — serial 5 = test beep");
+}
+
+void playSpeakerTest() {
+  if (!micReady) {
+    Serial.println("Spk: I2S not ready");
+    return;
+  }
+
+  Serial.println("Spk: playing 440 Hz test (~0.6s)...");
+  i2s_zero_dma_buffer(I2S_PORT);
+
+  const float freq = 440.0f;
+  const int durationMs = 600;
+  const int totalSamples = (I2S_SAMPLE_RATE * durationMs) / 1000;
+  int16_t chunk[I2S_BUFFER_SAMPLES];
+  int phase = 0;
+
+  while (phase < totalSamples) {
+    const int n = totalSamples - phase < I2S_BUFFER_SAMPLES
+      ? totalSamples - phase
+      : I2S_BUFFER_SAMPLES;
+
+    int i = 0;
+    while (i < n) {
+      const float t = (phase + i) / (float)I2S_SAMPLE_RATE;
+      chunk[i] = (int16_t)(sin(2.0f * 3.14159265f * freq * t) * 6000.0f);
+      i++;
+    }
+
+    size_t written = 0;
+    i2s_write(I2S_PORT, chunk, (size_t)n * sizeof(int16_t), &written, portMAX_DELAY);
+    phase += n;
+  }
+
+  Serial.println("Spk: done — dengar beep? kalau senyap check wiring + SD pin");
 }
 
 int readMicSimFallback() {
@@ -713,6 +758,8 @@ void loop() {
       setState(THINKING, "processing...");
     } else if (c == '4') {
       setState(TALKING, "speaking...");
+    } else if (c == '5') {
+      playSpeakerTest();
     } else if (c == ']' || c == 'n') {
       nextPage();
     } else if (c == '[' || c == 'p') {

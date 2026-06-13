@@ -1,0 +1,23 @@
+{
+  "name": "standard — protect tags (org-wide)",
+  "target": "tag",
+  "enforcement": "active",
+  "conditions": {
+    "repository_name": {
+      "include": ["~ALL"],
+      "exclude": []
+    },
+    "ref_name": {
+      "include": ["refs/tags/*"],
+      "exclude": []
+    }
+  },
+  "rules": [
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "non_fast_forward"
+    }
+  ]
+}
